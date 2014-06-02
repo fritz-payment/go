@@ -41,6 +41,7 @@ func (p *Pool) run() {
 		timeout := time.NewTimer(p.timeout)
 		select {
 		case b := <-p.Give:
+			b.Reset()
 			p.q.PushFront(buf{when: time.Now(), buf: b})
 
 		case p.Get <- e.Value.(buf).buf:
