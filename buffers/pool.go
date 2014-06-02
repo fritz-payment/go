@@ -2,62 +2,37 @@ package buffers
 
 import (
 	"bytes"
-	"container/list"
-	"time"
+	"sync"
 )
 
-type buf struct {
-	when time.Time
-	buf  *bytes.Buffer
-}
-
 type Pool struct {
-	Get  chan *bytes.Buffer
-	Give chan *bytes.Buffer
-
-	q       *list.List
-	timeout time.Duration
+	m   sync.Mutex
+	buf chan *bytes.Buffer
 }
 
-func NewPool(timeout time.Duration) *Pool {
+func NewPool(size int) *Pool {
 	p := &Pool{
-		Get:  make(chan *bytes.Buffer),
-		Give: make(chan *bytes.Buffer),
-
-		q:       new(list.List),
-		timeout: timeout,
+		buf: make(chan *bytes.Buffer, size),
 	}
-	go p.run()
 	return p
 }
 
-func (p *Pool) run() {
-	for {
-		if p.q.Len() == 0 {
-			p.q.PushFront(buf{when: time.Now(), buf: bytes.NewBuffer(nil)})
-		}
+func (p *Pool) Get() *bytes.Buffer {
+	select {
+	case b := <-p.buf:
+		b.Reset()
+		return b
+	default:
+		p.m.Lock()
+		b := bytes.NewBuffer(nil)
+		p.m.Unlock()
+		return b
+	}
+}
 
-		e := p.q.Front()
-		timeout := time.NewTimer(p.timeout)
-		select {
-		case b := <-p.Give:
-			b.Reset()
-			p.q.PushFront(buf{when: time.Now(), buf: b})
-
-		case p.Get <- e.Value.(buf).buf:
-			timeout.Stop()
-			p.q.Remove(e)
-
-		case <-timeout.C:
-			e := p.q.Front()
-			for e != nil {
-				n := e.Next()
-				if time.Since(e.Value.(buf).when) > p.timeout {
-					p.q.Remove(e)
-					e.Value = nil
-				}
-				e = n
-			}
-		}
+func (p *Pool) Return(b *bytes.Buffer) {
+	select {
+	case p.buf <- b:
+	default:
 	}
 }
